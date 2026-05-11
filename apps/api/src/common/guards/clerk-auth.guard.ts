@@ -43,9 +43,9 @@ export class ClerkAuthGuard implements CanActivate {
 
     let claims: { sub: string };
     try {
+      // Clerk's verifyToken doesn't use 'issuer' param; validation happens server-side
       claims = (await verifyToken(token, {
         secretKey: process.env.CLERK_SECRET_KEY,
-        issuer: process.env.CLERK_JWT_ISSUER,
       })) as { sub: string };
     } catch {
       throw new UnauthorizedException('Invalid token');

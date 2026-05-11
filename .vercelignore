@@ -1,0 +1,7 @@
+apps/api
+infra
+docs
+.github
+.vscode
+*.md
+!README.md
