@@ -1,0 +1,40 @@
+# Local development infrastructure.
+# Usage:  docker compose -f infra/docker-compose.yml up -d
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rfpilot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rfpilot
+      POSTGRES_PASSWORD: rfpilot
+      POSTGRES_DB: rfpilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - rfpilot_pg_data:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rfpilot -d rfpilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: rfpilot-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - rfpilot_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  rfpilot_pg_data:
+  rfpilot_redis_data:

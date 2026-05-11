@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 20.11.0
+  PNPM_VERSION: 9.12.0
+  # Values below are dummies — used only to satisfy env validation at build.
+  # Never use these in deploys; real values are injected by Vercel / Fly.
+  DATABASE_URL: postgresql://user:pass@localhost:5432/ci
+  DIRECT_URL: postgresql://user:pass@localhost:5432/ci
+  REDIS_URL: redis://localhost:6379
+  APP_URL: http://localhost:3000
+  API_URL: http://localhost:4000
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ci
+  CLERK_SECRET_KEY: sk_test_ci
+  CLERK_WEBHOOK_SECRET: whsec_ci
+  CLERK_JWT_ISSUER: https://clerk.example.com
+  STRIPE_SECRET_KEY: sk_test_ci
+  STRIPE_WEBHOOK_SECRET: whsec_ci
+  STRIPE_PRICE_STARTER: price_ci_starter
+  STRIPE_PRICE_TEAM: price_ci_team
+  OPENAI_API_KEY: sk-ci
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: ci
+  AWS_SECRET_ACCESS_KEY: ci
+  S3_BUCKET: rfpilot-ci
+  S3_BUCKET_REGION: us-east-1
+
+jobs:
+  lint-typecheck-test:
+    name: lint · typecheck · test · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @rfpilot/db generate
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
