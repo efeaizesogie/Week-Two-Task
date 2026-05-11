@@ -18,7 +18,7 @@ export class QuestionService {
     private readonly queue: QueueService,
   ) {}
 
-  listByRfp(orgId: string, rfpId: string) {
+  listByRfp(orgId: string, rfpId: string): Promise<any> {
     return this.prisma.question.findMany({
       where: { orgId, rfpId },
       orderBy: { ordinal: 'asc' },
@@ -26,7 +26,7 @@ export class QuestionService {
     });
   }
 
-  async findById(orgId: string, id: string) {
+  async findById(orgId: string, id: string): Promise<any> {
     const q = await this.prisma.question.findFirst({
       where: { id, orgId },
       include: { answer: true, comments: { include: { user: true } } },
@@ -35,7 +35,7 @@ export class QuestionService {
     return q;
   }
 
-  update(orgId: string, id: string, input: UpdateQuestionInput) {
+  update(orgId: string, id: string, input: UpdateQuestionInput): Promise<any> {
     return this.prisma.question.update({ where: { id, orgId }, data: input });
   }
 
@@ -53,7 +53,7 @@ export class QuestionService {
     return { enqueued: true };
   }
 
-  async editAnswer(orgId: string, questionId: string, input: EditAnswerInput) {
+  async editAnswer(orgId: string, questionId: string, input: EditAnswerInput): Promise<any> {
     return this.prisma.answer.upsert({
       where: { questionId },
       create: {
@@ -66,14 +66,14 @@ export class QuestionService {
     });
   }
 
-  approve(orgId: string, id: string) {
+  approve(orgId: string, id: string): Promise<any> {
     return this.prisma.question.update({
       where: { id, orgId },
       data: { status: QuestionStatus.APPROVED },
     });
   }
 
-  addComment(orgId: string, userId: string, questionId: string, input: CreateCommentInput) {
+  addComment(orgId: string, userId: string, questionId: string, input: CreateCommentInput): Promise<any> {
     return this.prisma.comment.create({
       data: { orgId, userId, questionId, body: input.body },
     });

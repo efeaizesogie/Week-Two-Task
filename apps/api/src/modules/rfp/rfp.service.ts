@@ -13,7 +13,7 @@ export class RfpService {
     private readonly queue: QueueService,
   ) {}
 
-  create(orgId: string, input: CreateRfpInput) {
+  create(orgId: string, input: CreateRfpInput): Promise<any> {
     return this.prisma.rfp.create({
       data: {
         orgId,
@@ -26,7 +26,7 @@ export class RfpService {
     });
   }
 
-  list(orgId: string) {
+  list(orgId: string): Promise<any> {
     return this.prisma.rfp.findMany({
       where: { orgId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
@@ -34,7 +34,7 @@ export class RfpService {
     });
   }
 
-  async findById(orgId: string, id: string) {
+  async findById(orgId: string, id: string): Promise<any> {
     const rfp = await this.prisma.rfp.findFirst({
       where: { id, orgId, deletedAt: null },
       include: { document: true, _count: { select: { questions: true } } },
@@ -43,7 +43,7 @@ export class RfpService {
     return rfp;
   }
 
-  update(orgId: string, id: string, input: UpdateRfpInput) {
+  update(orgId: string, id: string, input: UpdateRfpInput): Promise<any> {
     return this.prisma.rfp.update({
       where: { id, orgId },
       data: input,

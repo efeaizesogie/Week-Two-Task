@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import type Stripe from 'stripe';
+import type { Prisma } from '@rfpilot/db';
 
 import { Public } from '../../common/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
@@ -57,7 +58,7 @@ export class StripeWebhookController {
         source: 'stripe',
         eventId: event.id,
         type: event.type,
-        payload: event as unknown as Record<string, unknown>,
+        payload: JSON.parse(JSON.stringify(event)) as Prisma.InputJsonValue,
       },
     });
 

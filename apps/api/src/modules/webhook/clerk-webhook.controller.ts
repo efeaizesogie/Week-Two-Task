@@ -1,5 +1,6 @@
 import { BadRequestException, Controller, Headers, HttpCode, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
+import type { Prisma } from '@rfpilot/db';
 
 import { Public } from '../../common/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
@@ -43,7 +44,7 @@ export class ClerkWebhookController {
         source: 'clerk',
         eventId,
         type: event.type,
-        payload: event as unknown as Record<string, unknown>,
+        payload: JSON.parse(JSON.stringify(event)) as Prisma.InputJsonValue,
         processed: true,
       },
     });

@@ -1,5 +1,6 @@
 module.exports = {
-  extends: ['@rfpilot/config-eslint/next.js'],
+  root: true,
+  extends: ['next/core-web-vitals'],
   parserOptions: {
     project: './tsconfig.json',
     tsconfigRootDir: __dirname,
