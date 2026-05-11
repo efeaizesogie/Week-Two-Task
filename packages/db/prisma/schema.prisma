@@ -1,0 +1,386 @@
+// RFPilot — Prisma schema
+// Design notes:
+//   - Multi-tenant: every row that belongs to a tenant has orgId.
+//     This is enforced at the Nest data-access layer (OrgScopeInterceptor).
+//   - Soft-delete for user-facing entities via deletedAt.
+//   - AnswerVersion is an append-only audit trail for library answers.
+//   - pgvector is used for DocumentChunk.embedding (see migration).
+// --------------------------------------------------------------------
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+// ---- Enums -----------------------------------------------------------
+
+enum Role {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum PlanTier {
+  FREE
+  STARTER
+  TEAM
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
+enum DocumentType {
+  RFP            // the document we need to answer
+  KNOWLEDGE_BASE // reference material (past proposals, decks, policies)
+}
+
+enum DocumentStatus {
+  UPLOADING
+  PARSING
+  EMBEDDING
+  READY
+  FAILED
+}
+
+enum RfpStatus {
+  DRAFT
+  IN_PROGRESS
+  REVIEW
+  SUBMITTED
+  WON
+  LOST
+  ARCHIVED
+}
+
+enum QuestionStatus {
+  UNANSWERED
+  DRAFTED
+  EDITED
+  APPROVED
+  SKIPPED
+}
+
+enum AnswerSource {
+  AI_GENERATED
+  LIBRARY
+  MANUAL
+}
+
+// ---- Core tenancy ----------------------------------------------------
+
+model User {
+  id            String       @id @default(cuid())
+  clerkId       String       @unique
+  email         String       @unique
+  name          String?
+  imageUrl      String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  memberships   Membership[]
+  comments      Comment[]
+  auditLogs     AuditLog[]
+}
+
+model Organization {
+  id              String         @id @default(cuid())
+  clerkOrgId      String         @unique
+  slug            String         @unique
+  name            String
+  logoUrl         String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  deletedAt       DateTime?
+
+  memberships     Membership[]
+  subscription    Subscription?
+  documents       Document[]
+  rfps            Rfp[]
+  libraryAnswers  LibraryAnswer[]
+  apiKeys         ApiKey[]
+  auditLogs       AuditLog[]
+  invoices        Invoice[]
+
+  @@index([deletedAt])
+}
+
+model Membership {
+  id             String        @id @default(cuid())
+  userId         String
+  orgId          String
+  role           Role          @default(EDITOR)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+  @@index([orgId])
+}
+
+// ---- Billing ---------------------------------------------------------
+
+model Subscription {
+  id                    String              @id @default(cuid())
+  orgId                 String              @unique
+  stripeCustomerId      String              @unique
+  stripeSubscriptionId  String?             @unique
+  tier                  PlanTier            @default(FREE)
+  status                SubscriptionStatus  @default(ACTIVE)
+  seats                 Int                 @default(1)
+  currentPeriodEnd      DateTime?
+  cancelAtPeriodEnd     Boolean             @default(false)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  organization          Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+model Invoice {
+  id                String    @id @default(cuid())
+  orgId             String
+  stripeInvoiceId   String    @unique
+  amountDueCents    Int
+  amountPaidCents   Int
+  currency          String    @default("usd")
+  status            String
+  hostedInvoiceUrl  String?
+  periodStart       DateTime?
+  periodEnd         DateTime?
+  createdAt         DateTime  @default(now())
+
+  organization      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+// ---- Documents + Knowledge Base -------------------------------------
+
+model Document {
+  id          String          @id @default(cuid())
+  orgId       String
+  type        DocumentType
+  status      DocumentStatus  @default(UPLOADING)
+  name        String
+  s3Key       String
+  mimeType    String
+  sizeBytes   Int
+  pageCount   Int?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+
+  organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  chunks        DocumentChunk[]
+  rfp           Rfp?
+
+  @@index([orgId, type])
+  @@index([deletedAt])
+}
+
+/// Chunks of extracted text, with vector embeddings for RAG.
+/// The `embedding` column is typed as Unsupported because Prisma doesn't
+/// natively model pgvector yet; the migration creates it as `vector(1536)`.
+model DocumentChunk {
+  id           String                      @id @default(cuid())
+  orgId        String
+  documentId   String
+  ordinal      Int
+  content      String                      @db.Text
+  tokenCount   Int
+  embedding    Unsupported("vector(1536)")?
+  pageStart    Int?
+  pageEnd      Int?
+  createdAt    DateTime                    @default(now())
+
+  document     Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([documentId, ordinal])
+}
+
+// ---- RFPs + Questions + Answers -------------------------------------
+
+model Rfp {
+  id          String      @id @default(cuid())
+  orgId       String
+  documentId  String      @unique
+  title       String
+  customer    String?
+  dueDate     DateTime?
+  status      RfpStatus   @default(DRAFT)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
+
+  organization  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  document      Document     @relation(fields: [documentId], references: [id])
+  questions     Question[]
+
+  @@index([orgId, status])
+  @@index([deletedAt])
+}
+
+model Question {
+  id             String           @id @default(cuid())
+  orgId          String
+  rfpId          String
+  ordinal        Int
+  section        String?
+  text           String           @db.Text
+  status         QuestionStatus   @default(UNANSWERED)
+  assigneeUserId String?
+  dueDate        DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  rfp            Rfp              @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+  answer         Answer?
+  comments       Comment[]
+
+  @@index([orgId])
+  @@index([rfpId, ordinal])
+  @@index([assigneeUserId])
+}
+
+model Answer {
+  id              String        @id @default(cuid())
+  orgId           String
+  questionId      String        @unique
+  content         String        @db.Text
+  source          AnswerSource  @default(AI_GENERATED)
+  confidence      Float?        // 0-1, from the model
+  citations       Json?         // [{ documentId, chunkId, page, snippet }]
+  modelUsed       String?
+  promptVersion   String?
+  tokensInput     Int?
+  tokensOutput    Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  question        Question      @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+model Comment {
+  id          String   @id @default(cuid())
+  orgId       String
+  questionId  String
+  userId      String
+  body        String   @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  question    Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([questionId])
+  @@index([orgId])
+}
+
+// ---- Answer Library (canonical reusable Q&A) ------------------------
+
+model LibraryAnswer {
+  id            String                @id @default(cuid())
+  orgId         String
+  question      String                @db.Text
+  answer        String                @db.Text
+  tags          String[]              @default([])
+  ownerUserId   String?
+  isStale       Boolean               @default(false)
+  lastReviewed  DateTime?
+  usageCount    Int                   @default(0)
+  embedding     Unsupported("vector(1536)")?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  deletedAt     DateTime?
+
+  organization  Organization          @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  versions      LibraryAnswerVersion[]
+
+  @@index([orgId])
+  @@index([orgId, isStale])
+  @@index([deletedAt])
+}
+
+/// Append-only history. We never UPDATE rows here.
+model LibraryAnswerVersion {
+  id               String         @id @default(cuid())
+  libraryAnswerId  String
+  orgId            String
+  question         String         @db.Text
+  answer           String         @db.Text
+  tags             String[]
+  editorUserId     String?
+  createdAt        DateTime       @default(now())
+
+  libraryAnswer    LibraryAnswer  @relation(fields: [libraryAnswerId], references: [id], onDelete: Cascade)
+
+  @@index([libraryAnswerId, createdAt])
+  @@index([orgId])
+}
+
+// ---- Platform ops ---------------------------------------------------
+
+model ApiKey {
+  id           String    @id @default(cuid())
+  orgId        String
+  name         String
+  hashedKey    String    @unique
+  prefix       String    // first 8 chars for display
+  lastUsedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  orgId       String?
+  userId      String?
+  action      String   // e.g. "rfp.create", "answer.approve"
+  targetType  String?  // e.g. "Rfp", "Answer"
+  targetId    String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  organization Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  source      String   // "stripe" | "clerk"
+  eventId     String   @unique
+  type        String
+  payload     Json
+  processed   Boolean  @default(false)
+  error       String?
+  createdAt   DateTime @default(now())
+
+  @@index([source, type])
+}
